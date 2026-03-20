@@ -6,7 +6,7 @@ warnings.filterwarnings('ignore')
 
 # ── Page config ──────────────────────────────────────────────────
 st.set_page_config(
-    page_title="BCG Financial Analyst Chatbot",
+    page_title="Financial Analyst Chatbot",
     page_icon="📊",
     layout="centered"
 )
