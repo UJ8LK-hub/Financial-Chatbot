@@ -75,7 +75,7 @@ RULES:
 """.format(context=financial_context)
 
 # ── UI ───────────────────────────────────────────────────────────
-st.title("📊 BCG Financial Analyst Chatbot")
+st.title("📊 Financial Analyst Chatbot")
 st.caption("Powered by Gemini 2.5 Flash  |  Data: SEC EDGAR 10-K Filings  |  Apple · Microsoft · Tesla  |  FY2022–2024")
 
 with st.expander("💡 Try asking..."):
