@@ -1,3 +1,6 @@
 streamlit
 google-generativeai
 pandas
+yfinance
+matplotlib
+seaborn
