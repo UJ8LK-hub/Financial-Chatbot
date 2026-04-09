@@ -463,8 +463,9 @@ if load_btn:
 
 # ── Main content ──────────────────────────────────────────────────
 if "df" in st.session_state:
-    df                = st.session_state.df
-    financial_context = df.to_json(orient='records', indent=2)
+    df = st.session_state.df
+    # Use compact CSV instead of verbose indented JSON — cuts token count by ~60%
+    financial_context = df.to_csv(index=False)
 
     tab1, tab2 = st.tabs(["💬 Chat", "📈 Analysis"])
 
@@ -546,10 +547,14 @@ RULES:
 - Greetings / off-topic: one-sentence reply, then redirect to financial analysis.
 """
 
+        # ── Gemini chat session (native multi-turn) ──────────────────
+        # Re-create the chat session with full history on every rerun.
+        # This uses Gemini's proper contents[] multi-turn format instead of
+        # concatenating everything into one giant string prompt.
         if "messages" not in st.session_state:
-            st.session_state.messages             = []
-        if "conversation_history" not in st.session_state:
-            st.session_state.conversation_history = []
+            st.session_state.messages = []   # [{role, content}] for display
+        if "gemini_history" not in st.session_state:
+            st.session_state.gemini_history = []  # [{role, parts}] for API
 
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
@@ -558,29 +563,52 @@ RULES:
         if prompt := st.chat_input("Ask me anything about the loaded companies..."):
             with st.chat_message("user"):
                 st.markdown(prompt)
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            st.session_state.conversation_history.append(f"User: {prompt}")
 
-            history_text = "\n".join(st.session_state.conversation_history[-8:])
-            full_prompt  = (
-                f"{SYSTEM_PROMPT}\n\n"
-                f"Conversation so far:\n{history_text}\n\n"
-                f"Respond as the senior equity analyst:"
-            )
+            # ── Build Gemini multi-turn history (keep last 6 turns = 3 pairs) ──
+            # Trimming history is the primary lever against token bloat.
+            trimmed_history = st.session_state.gemini_history[-6:]
 
-            with st.chat_message("assistant"):
-                with st.spinner("Analysing..."):
-                    response = model.generate_content(full_prompt)
+            chat   = model.start_chat(history=trimmed_history)
+            # First message in a fresh chat injects the system prompt + data once
+            user_message = f"{SYSTEM_PROMPT}\n\nUser question: {prompt}" if not trimmed_history else prompt
+
+            # ── Retry with exponential backoff on ResourceExhausted ──────────
+            import time
+            max_retries = 3
+            reply       = None
+            for attempt in range(max_retries):
+                try:
+                    response = chat.send_message(user_message)
                     reply    = response.text.strip()
+                    break
+                except Exception as e:
+                    err = str(e)
+                    if "ResourceExhausted" in err or "429" in err:
+                        wait = 2 ** attempt   # 1s, 2s, 4s
+                        st.toast(f"Rate limit hit — retrying in {wait}s…", icon="⏳")
+                        time.sleep(wait)
+                    else:
+                        st.error(f"API error: {err}")
+                        break
+
+            if reply is None:
+                st.error("Rate limit exceeded after retries. Please wait 30–60 seconds and try again.")
+            else:
+                with st.chat_message("assistant"):
                     st.markdown(reply)
 
-            st.session_state.messages.append({"role": "assistant", "content": reply})
-            st.session_state.conversation_history.append(f"Analyst: {reply}")
+                # Persist display history
+                st.session_state.messages.append({"role": "user",      "content": prompt})
+                st.session_state.messages.append({"role": "assistant", "content": reply})
+
+                # Persist Gemini native history (use actual sent message, not prompt)
+                st.session_state.gemini_history.append({"role": "user",  "parts": [user_message]})
+                st.session_state.gemini_history.append({"role": "model", "parts": [reply]})
 
         if st.session_state.get("messages"):
             if st.button("🔄 Reset conversation"):
-                st.session_state.messages             = []
-                st.session_state.conversation_history = []
+                st.session_state.messages        = []
+                st.session_state.gemini_history  = []
                 st.rerun()
 
 else:
